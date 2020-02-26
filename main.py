@@ -1,11 +1,11 @@
-#working with ratio edge removal
-
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
 from tqdm import tqdm
 import itertools
 import matplotlib.mlab as ml
+import time
+import copy
 
 plt.close('all')
 
@@ -26,6 +26,7 @@ def remove_edge_path(path_edges,G):
     idx_edge = edges_orig.index(edges_np[idx])#this is the index in the path
         
     G.remove_edge(path_edges[idx_edge][0],path_edges[idx_edge][1])
+    return(G)
 
 #function to build the graph
 def build_graph(G,coords,radii_pin,radii_fiber):
@@ -70,17 +71,48 @@ def connections(pin_idxs,cs):
             else:
                 poss_conn_undesired.append((poss_conn_all[i,0],poss_conn_all[i,1]))
     return(poss_conn_undesired)
+
+def check_cs(cs,G):
+    for j in range(len(cs)):
+        if nx.has_path(G,cs[j,0],cs[j,1]):
+            stop=0
+        else:
+            print('broke desired path')
+            stop=1
+            return(stop)
+    return(stop)
     
-def pare_network(conns,G,alpha):
+def pare_network(conns,G_temp,alpha,cs):
+    stop = 0
+    G_new=G
+    H=G.__class__()
+    H.add_nodes_from(G)
+    H.add_edges_from(G.edges)
     for i in range((alpha)):
+        counter=0
         for nodes in conns:
             if nx.has_path(G,nodes[0],nodes[1]):
                 path=nx.dijkstra_path(G,nodes[0],nodes[1],weight='weight')
                 path_edges = list(zip(path,path[1:]))
-                remove_edge_path(path_edges,G)
+                G_new=remove_edge_path(path_edges,G)
+                stop = check_cs(cs,G_new)
+                if stop==1:
+                    print('stopping in if')
+                    return(H,stop)
+
             else:
+                stop = check_cs(cs,G_new)
+                if stop==1:
+                    print('stopping in else')
+                    return(H,stop)
+
                 print('no connection')
-    return(G)
+                counter+=1
+                if counter == len(conns):
+                    stop=1
+                    return(G,stop)
+    return(G,stop)
+                    
 
 def find_resistance(G,node):
     L=nx.laplacian_matrix(G)
@@ -108,7 +140,25 @@ def laplacian_resistance_plot(G,coords,pin_indxs,epochs):
         axes.flat[pins].contourf(xi,yi,zi)
     
     plt.savefig('re_' + str(epochs) + '.png')
-        
+
+
+def cool_plot(G_temp):
+    G=[]
+    G=G_temp
+    ncenter=5
+    p = dict(nx.single_source_shortest_path_length(G, ncenter))
+    
+    plt.figure(figsize=(8, 8))
+    nx.draw_networkx_edges(G, pos, nodelist=[ncenter], alpha=0.4)
+    nx.draw_networkx_nodes(G, pos, nodelist=list(p.keys()),
+                           node_size=80,
+                           node_color=list(p.values()),
+                           cmap=plt.cm.Reds_r)
+    
+    plt.xlim(-0.05, 1.05)
+    plt.ylim(-0.05, 1.05)
+    plt.axis('off')
+    plt.show()        
 
 #hyperparameters
 radii_pin = 0.2
@@ -128,7 +178,7 @@ c2 = [1,3]
 cs=np.asarray([c1,c2],np.int32)
 
 #number of fibers
-fibers = 1000
+fibers = 500
 
 #random fibers
 x=np.random.rand(fibers)
@@ -157,11 +207,16 @@ poss_conn_all = np.asarray(list(itertools.combinations(pin_idxs,2)))
 i=0
 N_edges_new = G.number_of_edges()
 loop = tqdm(total=(N_edges_orig-N_edges_remaining), position = 0)
-G_old=G
+
+stop=0
 while N_edges_new>N_edges_remaining:
     N_edges_old = N_edges_new
     
-    pare_network(conns,G,alpha)
+    [G_new,stop]=pare_network(conns,G,alpha,cs)
+    if stop==1:
+        print('stopping')
+        cool_plot(G_new)
+        break
     N_edges_new = G.number_of_edges()
     delta_edges = N_edges_old-N_edges_new
     loop.update(delta_edges)
@@ -171,19 +226,14 @@ while N_edges_new>N_edges_remaining:
             temp.append(nx.dijkstra_path_length(G,poss_conn_all[j,0],poss_conn_all[j,1]))
         else:
             temp.append(float("inf"))
-    for j in range(len(cs)):
-        if nx.has_path(G,cs[j,0],cs[j,1]):
-            pass
-        else:
-            print('broke desired path')
-            G = G_old
-            break
+
+    
     if i==0:
         large_re_log=temp
     else:
         large_re_log=np.vstack((large_re_log,temp))
     i+=1
-    G_old = G
+
     #if i%50==0:
     #    laplacian_resistance_plot(G,coords,pin_idxs,i)
 #    if i%20==0:
@@ -192,23 +242,9 @@ while N_edges_new>N_edges_remaining:
         
 
 #r=nx.algorithms.distance_measures.resistance_distance(G,0,2,weight='weight')
-plt.plot(large_re_log)
-plt.legend(('1','2','3','4','5','6'))
+#plt.plot(large_re_log)
+#plt.legend(('1','2','3','4','5','6'))
 
-ncenter=5
 
-p = dict(nx.single_source_shortest_path_length(G, ncenter))
-
-plt.figure(figsize=(8, 8))
-nx.draw_networkx_edges(G, pos, nodelist=[ncenter], alpha=0.4)
-nx.draw_networkx_nodes(G, pos, nodelist=list(p.keys()),
-                       node_size=80,
-                       node_color=list(p.values()),
-                       cmap=plt.cm.Reds_r)
-
-plt.xlim(-0.05, 1.05)
-plt.ylim(-0.05, 1.05)
-plt.axis('off')
-plt.show()
 
 laplacian_resistance_plot(G,coords,pin_idxs,i)
