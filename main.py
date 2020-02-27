@@ -4,8 +4,7 @@ import networkx as nx
 from tqdm import tqdm
 import itertools
 import matplotlib.mlab as ml
-import time
-import copy
+
 
 plt.close('all')
 
@@ -162,9 +161,9 @@ def cool_plot(G_temp):
 
 #hyperparameters
 radii_pin = 0.2
-radii_fiber = 0.08
-alpha = 2
-ratio = .30
+radii_fiber = 0.05
+alpha = 4
+ratio = .25
 
 #pin locations
 pins_x=[0,0,1,1]
@@ -178,7 +177,7 @@ c2 = [1,3]
 cs=np.asarray([c1,c2],np.int32)
 
 #number of fibers
-fibers = 500
+fibers = 2000
 
 #random fibers
 x=np.random.rand(fibers)
@@ -200,34 +199,42 @@ pos = nx.get_node_attributes(G, 'pos')
 N_edges_orig = G.number_of_edges()
 N_edges_remaining = round(N_edges_orig*(1-ratio))
 #
+
+#initialize for loop
+N_edges_new = G.number_of_edges()
+loop = tqdm(total=(N_edges_orig-N_edges_remaining), position = 0)
 re_log=[]
 large_re_log=[]
 conns=connections(pin_idxs,cs)
 poss_conn_all = np.asarray(list(itertools.combinations(pin_idxs,2)))
 i=0
-N_edges_new = G.number_of_edges()
-loop = tqdm(total=(N_edges_orig-N_edges_remaining), position = 0)
-
 stop=0
+
+#loop while threshold has not been reached (number of edges removed)
 while N_edges_new>N_edges_remaining:
     N_edges_old = N_edges_new
     
+    #pare the network
     [G_new,stop]=pare_network(conns,G,alpha,cs)
+    
+    #stop the training if the stop criteria is met
     if stop==1:
         print('stopping')
         cool_plot(G_new)
         break
+    
+    #find edge removal progress
     N_edges_new = G.number_of_edges()
     delta_edges = N_edges_old-N_edges_new
     loop.update(delta_edges)
+    
+    #get the shortest connections for all of the pins
     temp=[]
     for j in range(len(poss_conn_all)):
         if nx.has_path(G,poss_conn_all[j,0],poss_conn_all[j,1]):
             temp.append(nx.dijkstra_path_length(G,poss_conn_all[j,0],poss_conn_all[j,1]))
         else:
             temp.append(float("inf"))
-
-    
     if i==0:
         large_re_log=temp
     else:
@@ -241,9 +248,8 @@ while N_edges_new>N_edges_remaining:
 #        re_log.append(re)           
         
 
-#r=nx.algorithms.distance_measures.resistance_distance(G,0,2,weight='weight')
-#plt.plot(large_re_log)
-#plt.legend(('1','2','3','4','5','6'))
+plt.plot(large_re_log)
+plt.legend(('1','2','3','4','5','6'))
 
 
 
