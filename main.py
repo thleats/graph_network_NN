@@ -4,7 +4,9 @@ import networkx as nx
 from tqdm import tqdm
 import itertools
 import matplotlib.mlab as ml
-
+from scipy.interpolate import griddata
+from matplotlib import pyplot
+from mpl_toolkits.mplot3d import Axes3D
 
 plt.close('all')
 
@@ -21,7 +23,7 @@ def remove_edge_path(path_edges,G):
         else:
             pass
     edges_np = np.asarray(edges)#convert to np array
-    idx = np.argmax(edges_np)#this is the index in the path minus the pins
+    idx = np.argmin(edges_np)#this is the index in the path minus the pins
     idx_edge = edges_orig.index(edges_np[idx])#this is the index in the path
         
     G.remove_edge(path_edges[idx_edge][0],path_edges[idx_edge][1])
@@ -33,13 +35,13 @@ def build_graph(G,coords,radii_pin,radii_fiber):
     for i in tqdm(range(len(coords))):
         positions[i] = coords[i,:].tolist()
         G.add_node(i,pos=tuple(positions[i]))
-        d=np.sqrt(np.square(coords[i,0]-coords[:,0])+np.square(coords[i,1]-coords[:,1]))
+        d=(np.sqrt(np.square(coords[i,0]-coords[:,0])+np.square(coords[i,1]-coords[:,1])+np.square(coords[i,2]-coords[:,2])))
         if i<4:
             log = d<radii_pin
         else:
-            log = d<radii_fiber   
+            log = d<radii_fiber
         idxs=np.where(log)[0]
-        weights = d[idxs]
+        weights = np.square(d[idxs])
         for j in range(len(idxs)):
             if i!=idxs[j]:
                 G.add_edges_from([(i,idxs[j],{'weight':weights[j]})])
@@ -114,10 +116,28 @@ def pare_network(conns,G_temp,alpha,cs):
                     
 
 def find_resistance(G,node):
-    L=nx.laplacian_matrix(G)
-    M = np.linalg.pinv(L.toarray())
-    re=M[node[0],node[0]]+M[node[1],node[1]]-2*M[node[1],node[0]]
+    G1=G.copy()
+    weight = 'weight'
+    for (u, v, d) in G1.edges(data=True):
+       d[weight] = 1/d[weight]                                              
+    L=nx.laplacian_matrix(G1,weight='weight').todense()
+    M = np.linalg.pinv(L)
+    re=[]
+    for i in range(len(node)):
+        re.append(M[node[i,0],node[i,0]]+M[node[i,1],node[i,1]]-2*M[node[i,1],node[i,0]])
     return(re)
+    
+def find_resistances(G,node,coords):
+    G1=G.copy()
+    weight = 'weight'
+    for (u, v, d) in G1.edges(data=True):
+       d[weight] = 1/d[weight]                                              
+    L=nx.laplacian_matrix(G1,weight='weight').todense()
+    M = np.linalg.pinv(L)
+    log = []
+    for i in range(len(coords)):
+        log.append(M[node,node]+M[i,i]-2*M[node,i])
+    return(log)
 
 def laplacian_resistance_plot(G,coords,pin_indxs,epochs):
     fig,axes = plt.subplots(2,2)
@@ -135,7 +155,8 @@ def laplacian_resistance_plot(G,coords,pin_indxs,epochs):
             re=M[node,node]+M[i,i]-2*M[i,node]
             log.append(re)
         z=np.asarray(log)
-        zi=ml.griddata(x,y,z,xi,yi,interp='linear')
+        #zi=scipy.interpolate.griddata(x,y,z,xi,yi,interp='linear')
+        zi = griddata((x,y), z, (xi, yi), method='linear')
         axes.flat[pins].contourf(xi,yi,zi)
     
     plt.savefig('re_' + str(epochs) + '.png')
@@ -160,15 +181,16 @@ def cool_plot(G_temp):
     plt.show()        
 
 #hyperparameters
-radii_pin = 0.2
-radii_fiber = 0.05
-alpha = 4
-ratio = .25
+radii_pin = 0.3
+radii_fiber = 0.14
+alpha = 8
+ratio = .8
 
 #pin locations
-pins_x=[0,0,1,1]
-pins_y=[1,.25,.75,0]
-pin_idxs=[0,1,2,3]
+pins_x=[0,0,0,0,0,0,0,0,10,10,10,10,10,10,10,10]
+pins_y=[1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8]
+pins_y=[1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8]
+pin_idxs=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 
 
 #desired connections
@@ -182,11 +204,13 @@ fibers = 2000
 #random fibers
 x=np.random.rand(fibers)
 y=np.random.rand(fibers)
-fibers = [x,y]
-fibers = np.transpose(np.vstack((x,y)))
+z=np.random.rand(fibers)
+fibers = [x,y,z]
+fibers = np.transpose(np.vstack((x,y,z)))
+
 
 #pins and concat with fibers
-pins = np.transpose(np.vstack((np.asarray(pins_x),np.asarray(pins_y))))
+pins = np.transpose(np.vstack((np.asarray(pins_x),np.asarray(pins_y),np.asarray(pins_z))))
 coords = np.vstack((pins,fibers))
 
 #instantiate and create graph        
@@ -198,7 +222,7 @@ pos = nx.get_node_attributes(G, 'pos')
 #get number of edges
 N_edges_orig = G.number_of_edges()
 N_edges_remaining = round(N_edges_orig*(1-ratio))
-#
+
 
 #initialize for loop
 N_edges_new = G.number_of_edges()
@@ -213,17 +237,16 @@ stop=0
 #loop while threshold has not been reached (number of edges removed)
 while N_edges_new>N_edges_remaining:
     N_edges_old = N_edges_new
-    
     #pare the network
     [G_new,stop]=pare_network(conns,G,alpha,cs)
     
     #stop the training if the stop criteria is met
     if stop==1:
         print('stopping')
-        cool_plot(G_new)
+        #cool_plot(G_new)
         break
     
-    #find edge removal progress
+    #find edge-removal progress
     N_edges_new = G.number_of_edges()
     delta_edges = N_edges_old-N_edges_new
     loop.update(delta_edges)
@@ -239,6 +262,11 @@ while N_edges_new>N_edges_remaining:
         large_re_log=temp
     else:
         large_re_log=np.vstack((large_re_log,temp))
+    if i%10==0:
+        if i==0:
+            re_real_log=find_resistance(G,poss_conn_all)
+        else:
+            re_real_log=np.vstack((re_real_log,find_resistance(G,poss_conn_all)))
     i+=1
 
     #if i%50==0:
@@ -247,10 +275,40 @@ while N_edges_new>N_edges_remaining:
 #        re=find_resistance(G,cs[0,:])
 #        re_log.append(re)           
         
-
+plt.figure(0)
 plt.plot(large_re_log)
+plt.legend(('1','2','3','4','5','6'))
+plt.figure(1)
+plt.plot(re_real_log)
 plt.legend(('1','2','3','4','5','6'))
 
 
 
-laplacian_resistance_plot(G,coords,pin_idxs,i)
+
+#laplacian_resistance_plot(G,coords,pin_idxs,i)
+
+
+log = find_resistances(G,0,coords)
+
+fig = pyplot.figure()
+ax = Axes3D(fig)
+norm = plt.Normalize()
+log_test=np.square(np.square(np.asarray(log)))
+colors = plt.cm.jet(norm(log_test))
+
+ax.scatter(coords[:,0], coords[:,1], coords[:,2], c = colors)
+pyplot.show()
+
+path=nx.dijkstra_path(G,1,2,weight='weight')
+path_coordsx=coords[path,0]
+path_coordsy=coords[path,1]
+path_coordsz=coords[path,2]
+
+
+ax.scatter(path_coordsx, path_coordsy, path_coordsz, c = 'r')
+pyplot.show()
+
+fig2 = plt.figure(10)
+ax = Axes3D(fig2)
+ax.scatter(path_coordsx, path_coordsy, path_coordsz, c = 'r')
+pyplot.show()
