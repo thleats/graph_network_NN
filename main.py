@@ -1,3 +1,6 @@
+#this program is a simulation of training neuromorphic neural networks into hardware
+
+
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
